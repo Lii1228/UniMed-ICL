@@ -44,14 +44,14 @@ exec(model_module)
 warnings.filterwarnings('ignore')
 model = LightningModel.load_from_checkpoint(checkpoint_path, map_location=torch.device(args.device))
 
-# ================= 【核心修复：环境与策略控制】 =================
+# ================= 【环境与策略控制】 =================
 print("!!! Forcing Model Controls !!!")
 
 # 1. 控制 2D/3D 模式
 model.prob_2d = 0  # 核心修改：0 为强制 3D，如果需要 2D 请改为 1.0
 model.num_slices = 1 
 
-# 2. 【关键修复】锁死模型的策略采样逻辑
+# 2. 锁死模型的策略采样逻辑
 # 强制让 _sample_strategy 永远返回 0 (Random Visual Context only)
 # 策略 0 意味着：纯视觉上下文，无文本干扰，且 specific_prompts = None (允许外层循环完全接管 Prompt)
 model._sample_strategy = lambda dataset_name: 0
@@ -88,7 +88,7 @@ dataloader_val = DataLoader(dataset_val,
 # 初始化 Trainer
 trainer = pl.Trainer(logger=False, enable_checkpointing=False)
 
-# ================= 【核心修改】 分别评估每种 Prompt =================
+# ================= 分别评估每种 Prompt =================
 
 # 1. 定义你想测试的所有 Prompt 类型
 #target_prompt_types = ['lasso', 'box', 'point', 'scribble', 'dense_slice','dense']
@@ -104,8 +104,7 @@ print("="*50)
 for p_type in target_prompt_types:
     print(f"\n>>> Evaluating Prompt Type: [ {p_type} ] ...")
     
-    # 【关键技巧】：强制修改模型内部的 prompt_types 列表
-    # 同时覆盖 2D 和 3D 的 prompt 列表，确保万无一失
+    # 强制修改模型内部的 prompt_types 列表
     model.prompt_types_2d = [p_type] 
     model.prompt_types_3d = [p_type] 
     
