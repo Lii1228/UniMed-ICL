@@ -40,4 +40,6 @@ No unified spatial/voxel resampling is applied during preprocessing (No spatial 
 3.Running Inference Scripts
 You can trigger the entire evaluation workflow using the one-click shell script located in the root directory.
 Run via One-Click Script:
+```text
 ./run_inference.sh
+```
