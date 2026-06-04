@@ -1,0 +1,16 @@
+[
+    {
+        "name": "Brain",
+        "input": 0,
+        "output": "Seg",
+        "task": "Seg",
+        "task_config": {
+            "foreground_classes": [
+                10,
+                49
+            ]
+        },
+        "sample rate": 1,
+        "weight": 1
+    }
+]
