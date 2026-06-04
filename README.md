@@ -1,0 +1,41 @@
+1.Checkpoints & Weights Download
+Please download the required weight files in advance and strictly place them according to the directory structure below.
+
+📥 Download Links
+Model Checkpoints Download Link: 👉 Click here to download UniMed-ICL Checkpoints (Please replace this with your actual download URL)
+
+BiomedBERT Files Download Link: 👉 Click here to download BiomedBERT Files (Please replace this with your actual download URL)
+
+📂 Directory Structure Configuration
+Downloaded files must be placed in the respective subdirectories under the UniMed_ICL folder. The final directory layout should look exactly as follows:
+UniMed-ICL/
+├── run_inference.sh
+├── eval_script/
+│   ├── eval_ICL.py          # 3D ICL evaluation script
+│   ├── eval_ICL_2D.py       # 2D ICL evaluation script
+│   ├── eval_text.py         # Text-guided / Language-driven evaluation script
+│   ├── eval_interactive.py  # Interactive evaluation script
+│   └── dataloader.py        # Data loading module
+├── UniMed_ICL/
+│   ├── checkpoints/         # 📌 CRITICAL: Create this checkpoints folder
+│   │   └── [Place the downloaded UniMed-ICL model checkpoints (e.g., .ckpt or .pt) here]
+│   ├── weights/             # 📌 CRITICAL: Create this weights folder
+│   │   └── [Place the downloaded BiomedBERT pretrained files/weights here]
+│   ├── models/
+│   └── tool/
+├── Brain/                   # Brain dataset directory
+│   └── dataset.json
+└── Liver/                   # Liver dataset directory
+    └── dataset.json
+
+2.Dataset Preparation
+The repository includes built-in test entry points for Brain and Liver modalities. Please ensure that:
+
+The dataset path aligns perfectly with the configurations defined in dataset.json.
+
+No unified spatial/voxel resampling is applied during preprocessing (No spatial resampling is applied).
+
+3.Running Inference Scripts
+You can trigger the entire evaluation workflow using the one-click shell script located in the root directory.
+Run via One-Click Script:
+./run_inference.sh
