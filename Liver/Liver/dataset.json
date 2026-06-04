@@ -1,0 +1,24 @@
+{
+    "channel_names": {
+        "0": "CT"
+    },
+    "labels": {
+        "0": " background",
+        "1": "Liver",
+        "2": "Right kidney",
+        "3": "Spleen",
+        "4": "Pancreas",
+        "5": "Aorta",
+        "6": "Inferior Vena Cava (IVC)",
+        "7": "Right Adrenal Gland (RAG)",
+        "8": "Left Adrenal Gland (LAG)",
+        "9": "Gallbladder",
+        "10": "Esophagus",
+        "11": "Stomach",
+        "12": "Duodenum",
+        "13": "Left kidney"
+    },
+    "file_ending": ".nii.gz",
+    "Note": "FLARE22",
+    "numTraining": 50
+}
