@@ -2,9 +2,9 @@
 Please download the required weight files in advance and strictly place them according to the directory structure below.
 
 📥 Download Links
-Model Checkpoints Download Link: 👉 Click here to download UniMed-ICL Checkpoints (Please replace this with your actual download URL)
+Model Checkpoints Download Link: 👉 Click [here](https://drive.google.com/drive/folders/1w6NUxo5z_A_HVzhu8xSft7bcniHzgAw2?dmr=1&ec=wgc-drive-%5Bmodule%5D-goto) to download UniMed-ICL Checkpoints (Please replace this with your actual download URL)
 
-BiomedBERT Files Download Link: 👉 Click here to download BiomedBERT Files (Please replace this with your actual download URL)
+BiomedBERT Files Download Link: 👉 Click [here](https://drive.google.com/drive/folders/1w6NUxo5z_A_HVzhu8xSft7bcniHzgAw2?dmr=1&ec=wgc-drive-%5Bmodule%5D-goto) to download BiomedBERT Files (Please replace this with your actual download URL)
 
 📂 Directory Structure Configuration
 Downloaded files must be placed in the respective subdirectories under the UniMed_ICL folder. The final directory layout should look exactly as follows:
