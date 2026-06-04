@@ -17,25 +17,22 @@ import sys
 from datetime import datetime
 import warnings
 
-# 获取当前脚本所在目录的上级目录 (即项目根目录)，并加入系统路径
-# 这样在 eval 文件夹下运行脚本时，也能正确导入根目录的 config
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
 from config import get_parser
 
-# ================= 配置与加载部分 =================
 args = get_parser().parse_args()
 print(args)
 
-# --- 【核心修改 1：开源示例配置加载】 ---
 print("="*50)
 print("Running UniMed-ICL in Open-Source Sample Mode")
 print("="*50)
 
-# 指向我们刚生成的示例配置文件
+
 sample_config_path = os.path.join(PROJECT_ROOT, 'Liver', 'Liver.json')
-# 强制将数据目录指向 sample_data
+
 args.data_dir = PROJECT_ROOT
 
 try:
@@ -64,23 +61,22 @@ model = LightningModel.load_from_checkpoint(checkpoint_path, map_location=torch.
 # ================= 【环境与策略控制】 =================
 print("!!! Forcing Model Controls !!!")
 
-# 1. 控制 2D/3D 模式
-model.prob_2d = 0  # 核心修改：0 为强制 3D，如果需要 2D 请改为 1.0
+
+model.prob_2d = 0  
 model.num_slices = 1 
 
-# 2. 锁死模型的策略采样逻辑
-# 强制让 _sample_strategy 永远返回 0 (Random Visual Context only)
+
 model._sample_strategy = lambda dataset_name: 0
 print("-> Evaluation Mode ON: Model strategy forced to 0 (Random Visual Context only).")
 # ==========================================================
 
-# 统计参数
+
 total_params = sum(p.numel() for p in model.parameters())
 print("Total number of parameters: ", total_params)
 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print("Number of trainable parameters: ", trainable_params)
 
-# ================= 数据集准备 =================
+
 dataset_val = MetaDataset_Multi_Extended(
         dataset_dir = args.data_dir, 
         skip_resize = args.skip_resize,
@@ -101,15 +97,12 @@ dataloader_val = DataLoader(dataset_val,
                             pin_memory=True,
                             persistent_workers=True)
 
-# 初始化 Trainer
+
 trainer = pl.Trainer(logger=False, enable_checkpointing=False)
 
-# ================= 分别评估每种 Prompt =================
 
-# 1. 定义你想测试的所有 Prompt 类型
 target_prompt_types = ['dense']
 
-# 用于存储所有结果的大字典
 final_results = {}
 
 print("="*50)
@@ -119,31 +112,29 @@ print("="*50)
 for p_type in target_prompt_types:
     print(f"\n>>> Evaluating Prompt Type: [ {p_type} ] ...")
     
-    # 强制修改模型内部的 prompt_types 列表
+  
     model.prompt_types_2d = [p_type] 
     model.prompt_types_3d = [p_type] 
     
-    # ====== 跳过可视化，避免部分机器上的权限/显示报错 ======
     model.visualize_results = lambda *args, **kwargs: None
     
-    # 运行验证
+   
     trainer.validate(model, dataloaders=dataloader_val)
     
-    # 获取指标
-    metrics = model.trainer.callback_metrics
-    # 转换为普通字典 (float)
-    metrics_dict = {key: value.item() for key, value in metrics.items() if isinstance(value, torch.Tensor)}
     
-    # 存入总结果
+    metrics = model.trainer.callback_metrics
+    
+    metrics_dict = {key: value.item() for key, value in metrics.items() if isinstance(value, torch.Tensor)}
+   
     final_results[p_type] = metrics_dict
     
     print(f">>> Result for {p_type}: {metrics_dict}")
 
-# ================= 保存结果 =================
+
 
 current_time = datetime.now().strftime("%H%M%S")
 
-# 判断是 2D 还是 3D，自动添加标识
+
 if hasattr(model, 'prob_2d') and model.prob_2d==1 :
     mode_tag = "_2D"
 elif hasattr(model, 'prob_2d') and model.prob_2d==0 :
@@ -151,7 +142,7 @@ elif hasattr(model, 'prob_2d') and model.prob_2d==0 :
 else:
     mode_tag = "_mix"
 
-# --- 【核心修改 2：安全的保存路径】 ---
+
 safe_save_dir = os.path.join(PROJECT_ROOT, "opensource_eval_results")
 os.makedirs(safe_save_dir, exist_ok=True)
 
@@ -163,10 +154,9 @@ new_file_name = base_ckpt_name.replace(
 
 save_filename = os.path.join(safe_save_dir, new_file_name)
 
-# 打印最终结果字典，防止文件未成功写入
 print("\nFinal Results Dict:", json.dumps(final_results, indent=4))
 
-# 保存包含所有 Prompt 结果的 JSON
+
 with open(save_filename, 'w') as f:
     json.dump(final_results, f, indent=4)
 
