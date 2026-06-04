@@ -8,6 +8,7 @@ BiomedBERT Files Download Link: 👉 Click here to download BiomedBERT Files (Pl
 
 📂 Directory Structure Configuration
 Downloaded files must be placed in the respective subdirectories under the UniMed_ICL folder. The final directory layout should look exactly as follows:
+```text
 UniMed-ICL/
 ├── run_inference.sh
 ├── eval_script/
@@ -27,6 +28,7 @@ UniMed-ICL/
 │   └── dataset.json
 └── Liver/                   # Liver dataset directory
     └── dataset.json
+```
 
 2.Dataset Preparation
 The repository includes built-in test entry points for Brain and Liver modalities. Please ensure that:
