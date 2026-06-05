@@ -18,8 +18,9 @@ UniMed-ICL/
 │   ├── eval_ICL.py          # 3D ICL evaluation script
 │   ├── eval_ICL_2D.py       # 2D ICL evaluation script
 │   ├── eval_text.py         # Text-guided / Language-driven evaluation script
-│   ├── eval_interactive.py  # Interactive evaluation script
-│   └── dataloader.py        # Data loading module
+│   ├── eval_interactive.py  # Interactive evaluation scrips
+│   ├── config.py 
+│   └── dataloader.py        
 ├── UniMed_ICL/
 │   ├── checkpoints/         # 📌 CRITICAL: Create this checkpoints folder
 │   │   └── [Place the downloaded UniMed-ICL model checkpoints (e.g., .ckpt or .pt) here]
@@ -27,7 +28,7 @@ UniMed-ICL/
 │   │   └── [Place the downloaded BiomedBERT pretrained files/weights here]
 │   ├── models/
 │   └── tool/
-├── Brain/                   # Brain dataset directory
+├── Brain/                   # Brain dataset directory for Text-guided
 │   └── dataset.json
 └── Liver/                   # Liver dataset directory
     └── dataset.json
