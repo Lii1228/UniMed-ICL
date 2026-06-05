@@ -1,7 +1,10 @@
+1.🛠 Environment Setup
+
+This project provides a minimal, inference-specific dependency list (`requirements.txt`), removing irrelevant packages to avoid version conflicts.
 1.Checkpoints & Weights Download
 Please download the required weight files in advance and strictly place them according to the directory structure below.
 
-📥 Download Links
+2.📥 Download Links
 Model Checkpoints Download Link: 👉 Click [here](https://drive.google.com/drive/folders/1w6NUxo5z_A_HVzhu8xSft7bcniHzgAw2?dmr=1&ec=wgc-drive-%5Bmodule%5D-goto) to download UniMed-ICL Checkpoints (Please replace this with your actual download URL)
 
 BiomedBERT Files Download Link: 👉 Click [here](https://drive.google.com/drive/folders/1w6NUxo5z_A_HVzhu8xSft7bcniHzgAw2?dmr=1&ec=wgc-drive-%5Bmodule%5D-goto) to download BiomedBERT Files (Please replace this with your actual download URL)
@@ -30,14 +33,14 @@ UniMed-ICL/
     └── dataset.json
 ```
 
-2.Dataset Preparation
+3.Dataset Preparation
 The repository includes built-in test entry points for Brain and Liver modalities. Please ensure that:
 
 The dataset path aligns perfectly with the configurations defined in dataset.json.
 
 No unified spatial/voxel resampling is applied during preprocessing (No spatial resampling is applied).
 
-3.Running Inference Scripts
+4.Running Inference Scripts
 You can trigger the entire evaluation workflow using the one-click shell script located in the root directory.
 Run via One-Click Script:
 ```text
