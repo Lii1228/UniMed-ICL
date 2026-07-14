@@ -11,13 +11,11 @@ from datetime import datetime
 import warnings
 import sys
 
-
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
 from dataloader import MetaDataset_Multi_Extended
 from config import get_parser
-
 
 try:
     from utils.pairwise_measures import BinaryPairwiseMeasures as PM
@@ -25,13 +23,11 @@ except ImportError:
     print("Warning: Could not import BinaryPairwiseMeasures. Metrics might be unavailable.")
     PM = None
 
-
 args = get_parser().parse_args()
 
 print("="*60)
-print("Running UniMed-ICL Text-Prompt Mode in Open-Source")
+print("Running UniMedSeg Text-Prompt Mode in Open-Source")
 print("="*60)
-
 
 sample_config_path = os.path.join(PROJECT_ROOT, 'Brain','Brain.json')
 
@@ -45,7 +41,6 @@ try:
     print(f"Config details: {len(data_loading_config)} dataset(s) loaded")
 except Exception as e:
     raise RuntimeError(f"Failed to load sample text config. Please ensure 'sample_config_text.json' exists. Error: {e}")
-
 
 assert args.checkpoint_path is not None, "The checkpoint_path should not be None!"
 checkpoint_path = args.checkpoint_path
@@ -63,7 +58,6 @@ else:
 checkpoint_path = os.path.join(checkpoint_path, selected_ckpt)
 print(f'Loading checkpoint from: {checkpoint_path}')
 
-
 model_module = f'from {args.model_name}.lightning_model import LightningModel'
 print(model_module)
 exec(model_module)
@@ -74,10 +68,8 @@ model = LightningModel.load_from_checkpoint(checkpoint_path, map_location=torch.
 model.to(args.device)
 model.eval()
 
-
-model.prob_2d = 0      
+model.prob_2d = 0       
 model.num_slices = 1   
-
 
 target_dataset_names = []
 if isinstance(data_loading_config, list):
@@ -94,7 +86,6 @@ if hasattr(model, 'text_enabled_datasets'):
     updated_list = list(set(model.text_enabled_datasets + target_dataset_names))
     model.text_enabled_datasets = updated_list
     print(f"Updated Text Whitelist: {model.text_enabled_datasets}")
-
 
 dataset_val = MetaDataset_Multi_Extended(
         dataset_dir = args.data_dir, 
@@ -113,10 +104,7 @@ dataloader_val = DataLoader(dataset_val,
                             pin_memory=True,
                             persistent_workers=True)
 
-
-
 def patched_validation_step(self, batch, batch_idx):
-  
     config = getattr(self, 'eval_config', {})
     
     target_prompt_type = config.get('visual_prompt', 'dense') 
@@ -134,39 +122,31 @@ def patched_validation_step(self, batch, batch_idx):
     input_mod = process_input(batch.get('input', [''])[0])
     output_mod = process_input(batch.get('output', [''])[0])
     
-  
     imgs = batch['image'][0, :, None, :]
     labs = batch['label'][0, :, None, :]
     
-    target_in = imgs[:1, :]           
+    target_in = imgs[:1, :]            
     target_out = labs[:1, :]
     context_in = imgs[None, 1:, :]    
     context_label_dense = labs[None, 1:, :]
     
     L = context_in.shape[1]
     
- 
     language_tokens = None
     if enable_text and dataset_name in self.text_enabled_datasets:
-       
         target_ids = self._get_target_ids(batch, 1)
         language_tokens = self.text_adapter(target_ids, self.device)
         
-  
     if remove_visual:
-        
         B_dim, C_dim, W_dim, H_dim, D_dim = target_in.shape
-       
         context_in = torch.zeros((B_dim, 0, C_dim, W_dim, H_dim, D_dim), device=self.device)
         context_prompt = torch.zeros((B_dim, 0, C_dim, W_dim, H_dim, D_dim), device=self.device)
     else:
-        
         context_prompt = self.generate_sparse_prompt(
             context_label_dense.to(self.device), 
             is_train=False, 
             specific_prompt_types=[target_prompt_type] * L
         )
-    
     
     mask = self.forward(
         target_in.to(self.device), 
@@ -175,7 +155,6 @@ def patched_validation_step(self, batch, batch_idx):
         language_tokens=language_tokens
     )
     
-   
     if PM is not None:
         try:
             p_pred = (mask > 0.5).float().cpu().numpy()
@@ -187,7 +166,6 @@ def patched_validation_step(self, batch, batch_idx):
                 bpm = PM(p_pred, p_ref, dict_args={"nsd": 1, "hd_perc": 95})
                 dsc = bpm.dsc()
                 
-            
             self.log(f'{dataset_name}_{str(input_mod)}{str(output_mod)}_{task}_DSC', float(dsc))
             self.log(f'{dataset_name}_DSC', float(dsc))
             
@@ -196,17 +174,13 @@ def patched_validation_step(self, batch, batch_idx):
 
     return torch.tensor(0.0, device=self.device) 
 
-
 model.eval_config = {} 
 model.validation_step = types.MethodType(patched_validation_step, model)
 print(">> Successfully patched model.validation_step for Scheme C evaluation.")
 
-
 trainer = pl.Trainer(logger=False, enable_checkpointing=False, accelerator='auto', devices=1)
 
-
 eval_scenarios = [
-   
     {'name': 'Text_Only_SchemeC', 'visual_prompt': 'none', 'enable_text': True,  'remove_visual': True}, 
 ]
 
@@ -221,17 +195,13 @@ for scenario in eval_scenarios:
     print(f"\n>>> Running Scenario: [{run_name}]")
     print(f"    Config: {scenario}")
     
-    
     model.eval_config = scenario
     
     model.visualize_results = lambda *args, **kwargs: None
     
-   
     trainer.validate(model, dataloaders=dataloader_val)
     
-   
     metrics = {k: (v.item() if isinstance(v, torch.Tensor) else v) for k, v in model.trainer.callback_metrics.items()}
-    
     
     main_dsc_key = f"{target_dataset_names[0]}_DSC" if target_dataset_names else "DSC"
     main_dsc = metrics.get(main_dsc_key, "N/A")
@@ -244,9 +214,7 @@ for scenario in eval_scenarios:
     final_results[run_name] = metrics
     print(f">>> Scenario [{run_name}] Finished. Main DSC: {main_dsc}")
 
-
 current_time = datetime.now().strftime("%H%M%S")
-
 
 safe_save_dir = os.path.join(PROJECT_ROOT, "opensource_eval_results")
 os.makedirs(safe_save_dir, exist_ok=True)
