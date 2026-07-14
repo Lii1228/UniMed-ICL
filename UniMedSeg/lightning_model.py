@@ -1,7 +1,3 @@
-'''
-Context: mixed strategy strictly uses a one-out-of-three selection for itself.
-Incorporate 2D context aligned with target + text-driven support. 
-'''
 import pytorch_lightning as pl
 import torch
 from torch import nn 
