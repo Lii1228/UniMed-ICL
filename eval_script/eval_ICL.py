@@ -24,10 +24,6 @@ from config import get_parser
 args = get_parser().parse_args()
 print(args)
 
-print("="*50)
-print("Running UniMed-ICL in Open-Source Sample Mode")
-print("="*50)
-
 sample_config_path = os.path.join(PROJECT_ROOT, 'Liver', 'Liver.json')
 
 args.data_dir = PROJECT_ROOT
