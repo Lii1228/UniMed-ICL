@@ -16,19 +16,17 @@ from datetime import datetime
 import warnings
 import types  
 
-
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
 from dataloader import MetaDataset_Multi, Meta_dataset_Sampler, MetaDataset_Multi_Extended, MetaDatasetf_transform_1channel
 from config import get_parser
 
-
 args = get_parser().parse_args()
 print(args)
 
 print("="*50)
-print("Running UniMed-ICL 2D Random Retrieval in Open-Source Sample Mode")
+print("Running UniMedSeg 2D Random Retrieval in Open-Source Sample Mode")
 print("="*50)
 
 sample_config_path = os.path.join(PROJECT_ROOT, 'Liver', 'Liver.json')
@@ -58,21 +56,18 @@ exec(model_module)
 warnings.filterwarnings('ignore')
 model = LightningModel.load_from_checkpoint(checkpoint_path, map_location=torch.device(args.device))
 
-
 print("!!! Forcing Model Controls !!!")
 
 model.prob_2d = 1  
 model.num_slices = 1 
 
-
 model._sample_strategy = lambda dataset_name: 0
 print("-> Evaluation Mode ON: Model strategy forced to 0 (Random Visual Context only).")
 
-
 def random_extract_slices(self, img_3d_group, lab_3d_group, axis, num_samples, batch_idx):
     """
-    Random ICL Context Retrieval:
-    随机从包含前景的切片中抽取作为 Context，不进行形态或伪标签匹配。
+    Random Context Retrieval:
+    Randomly extract slices containing foreground to serve as Context, without morphological or pseudo-label matching.
     """
     G = img_3d_group.shape[0]
     selected_indices_matrix = torch.zeros((G, num_samples), dtype=torch.long, device=self.device)
@@ -80,7 +75,6 @@ def random_extract_slices(self, img_3d_group, lab_3d_group, axis, num_samples, b
     local_target_dim = axis + 1
     dims_to_sum = [0, 1, 2, 3]
     dims_to_sum.remove(local_target_dim)
-
 
     group_metadata = []
     for g in range(G):
@@ -101,7 +95,6 @@ def random_extract_slices(self, img_3d_group, lab_3d_group, axis, num_samples, b
         else:
             group_metadata.append({'valid': False, 'max_dim': lab.shape[local_target_dim]})
 
-
     for n in range(num_samples):
         valid_g_indices = [i for i, meta in enumerate(group_metadata) if meta['valid']]
     
@@ -110,7 +103,6 @@ def random_extract_slices(self, img_3d_group, lab_3d_group, axis, num_samples, b
                 selected_indices_matrix[g, n] = torch.randint(0, group_metadata[g]['max_dim'], (1,)).item()
             continue
         
-     
         leader_g = random.choice(valid_g_indices)
         leader_meta = group_metadata[leader_g]
         
@@ -124,14 +116,11 @@ def random_extract_slices(self, img_3d_group, lab_3d_group, axis, num_samples, b
             follower_meta = group_metadata[g]
             
             if follower_meta['valid']:
-            
                 random_idx = torch.randint(0, len(follower_meta['valid_indices']), (1,)).item()
                 best_abs_idx = follower_meta['valid_indices'][random_idx].item()
                 selected_indices_matrix[g, n] = best_abs_idx
             else:
-           
                 selected_indices_matrix[g, n] = torch.randint(0, follower_meta['max_dim'], (1,)).item()
-
 
     out_img_group = []
     out_lab_group = []
@@ -148,17 +137,14 @@ def random_extract_slices(self, img_3d_group, lab_3d_group, axis, num_samples, b
         
     return torch.stack(out_img_group, dim=0), torch.stack(out_lab_group, dim=0)
 
-
 model._extract_slices_single_axis = types.MethodType(random_extract_slices, model)
 print("-> Slices extraction method patched: Random Valid Retrieval (Foreground Only).")
 # =========================================================================
-
 
 total_params = sum(p.numel() for p in model.parameters())
 print("Total number of parameters: ", total_params)
 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print("Number of trainable parameters: ", trainable_params)
-
 
 dataset_val = MetaDataset_Multi_Extended(
         dataset_dir = args.data_dir, 
@@ -180,9 +166,7 @@ dataloader_val = DataLoader(dataset_val,
                             pin_memory=True,
                             persistent_workers=True)
 
-
 trainer = pl.Trainer(logger=False, enable_checkpointing=False)
-
 
 target_prompt_types = ['dense']
 final_results = {}
@@ -194,21 +178,16 @@ print("="*50)
 for p_type in target_prompt_types:
     print(f"\n>>> Evaluating Prompt Type: [ {p_type} ] ...")
     
-   
     model.prompt_types_2d = [p_type] 
     model.prompt_types_3d = [p_type] 
     model.visualize_results = lambda *args, **kwargs: None
     # ==================================================
     
-
     trainer.validate(model, dataloaders=dataloader_val)
     
-
-
     metrics_dict = {key: (value.item() if isinstance(value, torch.Tensor) else value) for key, value in metrics.items()}
     final_results[p_type] = metrics_dict
     print(f">>> Result for {p_type}: {metrics_dict}")
-
 
 current_time = datetime.now().strftime("%H%M%S")
 
@@ -219,17 +198,14 @@ elif hasattr(model, 'prob_2d') and model.prob_2d==0 :
 else:
     mode_tag = "_mix"
 
-
 safe_save_dir = os.path.join(PROJECT_ROOT, "opensource_eval_results")
 os.makedirs(safe_save_dir, exist_ok=True)
-
 
 base_ckpt_name = os.path.basename(checkpoint_path)
 new_file_name = base_ckpt_name.replace(
     '.ckpt', 
     f'_FLARE22_Sample_context{str(args.context_size)}{mode_tag}_Random_Retrieval_{current_time}_ICL.json'
 )
-
 
 save_filename = os.path.join(safe_save_dir, new_file_name)
 
