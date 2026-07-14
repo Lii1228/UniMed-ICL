@@ -1,8 +1,6 @@
 '''
-上下文， mixed 只有自己的三选一
-'''
-'''
-加入2D上下文和target对齐 + 文本驱动 
+Context: mixed strategy strictly uses a one-out-of-three selection for itself.
+Incorporate 2D context aligned with target + text-driven support. 
 '''
 import pytorch_lightning as pl
 import torch
@@ -18,7 +16,7 @@ import cv2
 # Import Model
 from .models.PrimusS_ICL import primus_icl_s
 
-# [新增] 导入文本驱动模块
+# Import text-driven module
 from .tool.text_guide import TextEmbeddingAdapter
 
 # Import Prompt Generators
@@ -69,9 +67,9 @@ class LightningModel(pl.LightningModule):
             grad_checkpointing = self.hparams.grad_checkpointing > 0
         )
 
-        # 文本适配器初始化
-        # 动态获取 visual model 的 embed_dim
-       # 尝试从 self.net.eva.embed_dim 获取维度
+        # Initialize text adapter
+        # Dynamically retrieve the embed_dim from the visual model
+        # Attempt to retrieve the dimension from self.net.eva.embed_dim
         if hasattr(self.net, "eva") and hasattr(self.net.eva, "embed_dim"):
             target_dim = self.net.eva.embed_dim
         elif hasattr(self.net, "embed_dim"):
@@ -82,14 +80,14 @@ class LightningModel(pl.LightningModule):
             target_embed_dim=target_dim 
         )
         
-       # ==========================================================
-        # 【核心修复】强制将 Text Cache 搬运到 CPU
-        # 解决 DDP 模式下，多卡同时读取 GPU 0 上缓存导致的死锁
+        # ==========================================================
+        # Move Text Cache to CPU RAM
+        # Prevents deadlocks in DDP mode caused by multiple GPUs simultaneously reading the cache on GPU 0
         # ==========================================================
         print(f">> [System] Rank {self.global_rank}: Moving Text Cache to CPU RAM to avoid DDP Deadlock...")
         if hasattr(self.text_adapter, 'embedding_cache') and isinstance(self.text_adapter.embedding_cache, dict):
-            # 1. 强制转为 CPU Tensor
-            # 2. 设为非梯度模式 (detach)
+            # 1. Convert to CPU Tensor
+            # 2. Set to non-gradient mode (detach)
             self.text_adapter.embedding_cache = {
                 k: v.cpu().detach() for k, v in self.text_adapter.embedding_cache.items()
             }
@@ -103,7 +101,7 @@ class LightningModel(pl.LightningModule):
                 param.requires_grad = True
                 print(f"  -> Unfrozen: {name}")
         
-        # 启用文本的数据集白名单
+        # Whitelist of datasets enabled for text prompts
         self.text_enabled_datasets = [
             'Dataset827_hab_t1_freesurfer_raw',
             'Dataset727_hab_t1_freesurfer',
@@ -111,22 +109,22 @@ class LightningModel(pl.LightningModule):
             'Dataset729_nimh_t1_freesurfer'
         ]
         # ==========================================================
-        # [新增] Label ID 到 Text Cache ID 的映射表
+        # Mapping table from Label ID to Text Cache ID
         # ==========================================================
         # Key: Freesurfer Label ID
-        # Value: 你的 biomedbert_embeddings_cache.pt 中对应的 Index
-        # 根据 preprocess_embeddings.ipynb 的 sorted(list(set(cache_keys))) 推断：
+        # Value: The corresponding Index in the biomedbert_embeddings_cache.pt
+        # Inferred based on sorted(list(set(cache_keys))) from preprocess_embeddings.ipynb:
         # 0: (3, 42) Cortex
         # 1: (4, 43) Lateral Ventricle
         # 2: (10, 49) Thalamus
         # 3: (12, 51) Putamen
         # 4: (17, 53) Hippocampus
         # 5: (18, 54) Amygdala
-        # [修改后] 映射到 ID List (必须与缓存文件里的 Key 一致)
+        # Map to ID List (must be consistent with the Key in the cache file)
         self.LABEL_TO_TEXT_ID = {
-            # Cortex (Key应为 3, 42)
+            # Cortex (Key should be 3, 42)
             3: [3, 42], 42: [3, 42],
-            # Ventricle (Key应为 4, 43)
+            # Ventricle (Key should be 4, 43)
             4: [4, 43], 43: [4, 43],
             # Thalamus
             10: [10, 49], 49: [10, 49],
@@ -138,16 +136,16 @@ class LightningModel(pl.LightningModule):
             18: [18, 54], 54: [18, 54],
         }
         
-        self.DEFAULT_TEXT_ID = [0] # 默认也改为列表
+        self.DEFAULT_TEXT_ID = [0] # Default to a list format
         # ==========================================================
-        # 策略概率初始化 (7种)
+        # Strategy probability initialization (7 types)
         # 0: A   (Random Vis)
         # 1: C   (All Target Vis)
-        # 2: AC  (Mix Vis) -> 原 Mode B
+        # 2: AC  (Mix Vis) -> Originally Mode B
         # 3: Text(Text Only, Zero Vis)
         # 4: AT  (Random Vis + Dense Prompt + Text)
         # 5: CT  (All Target Vis + Text)
-        # 6: ACT (Mix Vis + Mode B Prompt + Text) -> 原 Mode B + Text
+        # 6: ACT (Mix Vis + Mode B Prompt + Text) -> Originally Mode B + Text
         # ==========================================================
         raw_probs = [
             self.hparams.get('prob_a', 0.2),    # 0
@@ -159,14 +157,14 @@ class LightningModel(pl.LightningModule):
             self.hparams.get('prob_act', 0.2)   # 6
         ]
         
-        # 归一化所有策略概率 (用于支持文本的数据集)
+        # Normalize all strategy probabilities (for datasets supporting text)
         total_p = sum(raw_probs)
         if total_p > 0:
             self.probs_all = [p / total_p for p in raw_probs]
         else:
             self.probs_all = [1/7] * 7
             
-        # 归一化纯视觉策略概率 (用于不支持文本的数据集: 仅A, C, AC)
+        # Normalize vision-only strategy probabilities (for datasets not supporting text: A, C, AC only)
         vis_raw = [raw_probs[0], raw_probs[1], raw_probs[2]]
         total_vis = sum(vis_raw)
         if total_vis > 0:
@@ -212,13 +210,13 @@ class LightningModel(pl.LightningModule):
         self.smoothl3l1Loss = SmoothL3_L1Loss(beta=1.0)
         
         # ==========================================================
-        # [新增] 动态 Context Size 采样配置
+        # Dynamic Context Size sampling configuration
         # ==========================================================
         self.context_size_pool = self.hparams.get('context_size_pool', [])
         probs_str = self.hparams.get('context_size_probs', ['random'])
         
         if len(probs_str) == 1 and str(probs_str[0]).lower() == 'random':
-            self.context_size_probs = None  # 代表均匀分布
+            self.context_size_probs = None  # Represents a uniform distribution
         else:
             self.context_size_probs = [float(p) for p in probs_str]
             total_prob = sum(self.context_size_probs)
@@ -228,22 +226,22 @@ class LightningModel(pl.LightningModule):
                 self.context_size_probs = None
                 
         if self.context_size_pool and self.context_size_probs is not None:
-            assert len(self.context_size_pool) == len(self.context_size_probs), "Context Size Pool和Probs的数量必须一致！"
+            assert len(self.context_size_pool) == len(self.context_size_probs), "The lengths of context_size_pool and context_size_probs must be equal!"
             
-    # [Modified] Update forward to accept visual_mask (for compatibility)
+    # Update forward to accept visual_mask (for compatibility)
     def forward(self, target_in, context_in, context_out, language_tokens=None, visual_mask=None):
         target_in = target_in.to(self.device)
         context_in = context_in.to(self.device)
         context_out = context_out.to(self.device)
         
-        # 既然是 Scheme C (物理置空)，模型靠 L=0 自动判断，不需要 Mask
-        # 直接删掉 visual_mask 参数传递
+        # In Scheme C (physical removal), the model determines this automatically via L=0, so the visual mask is not needed.
+        # Omit visual_mask parameter passing
         y_pred = self.net(target_in, context_in, context_out, language_tokens=language_tokens)
         return y_pred
 
     def _get_target_ids(self, batch, batch_size):
         dataset_name = batch.get('dataset', ['Unknown'])[0]
-        # 初始化为默认值
+        # Initialize with default values
         target_ids_batch = [[self.DEFAULT_TEXT_ID]] * batch_size 
         
         if dataset_name in self.text_enabled_datasets:
@@ -276,11 +274,11 @@ class LightningModel(pl.LightningModule):
                         elif isinstance(fg_classes, (int, float)):
                             rep_label = int(fg_classes)
                         
-                        # [修改] 获取 ID 列表
-                        # 注意：self.DEFAULT_TEXT_ID 现在是 [0]
+                        # Retrieve ID list
+                        # Note: self.DEFAULT_TEXT_ID is currently [0]
                         text_id_list = self.LABEL_TO_TEXT_ID.get(rep_label, self.DEFAULT_TEXT_ID)
                         
-                        # [关键] 确保结构正确: [[3, 42], [17, 53], ...]
+                        # Ensure correct structural format: [[3, 42], [17, 53], ...]
                         if isinstance(text_id_list, list):
                             ids_for_this_batch.append(text_id_list)
                         else:
@@ -294,7 +292,7 @@ class LightningModel(pl.LightningModule):
         return target_ids_batch
 
     # ==============================================================================
-    # 核心策略选择逻辑
+    # Core strategy selection logic
     # ==============================================================================
     def _sample_strategy(self, dataset_name):
         # --- DEBUG START ---
@@ -310,24 +308,24 @@ class LightningModel(pl.LightningModule):
         if dataset_name in self.text_enabled_datasets:
             return np.random.choice(7, p=self.probs_all)
         else:
-            # 如果到了这里，设置 prob_text=1 也没用
+            # If execution reaches here, setting prob_text=1 has no effect
             return np.random.choice(3, p=self.probs_vis_only)
         
     def _sample_dynamic_context_size(self, current_cases):
-        """ 根据配置的概率池，动态决定当前 Batch 要保留多少个 Context Case """
+        """ Dynamically determine the number of Context Cases to retain for the current Batch based on the configured probability pool. """
         if not self.context_size_pool:
             return current_cases
             
-        # 过滤掉大于当前 DataLoader 吐出的最大容量的数值
+        # Filter out values exceeding the maximum capacity provided by the current DataLoader
         valid_pool = [c for c in self.context_size_pool if c <= current_cases]
         if not valid_pool:
             return current_cases
             
-        # 均匀随机抽取
+        # Uniform random sampling
         if self.context_size_probs is None:
             return int(np.random.choice(valid_pool))
         else:
-            # 根据 valid_pool 提取对应的概率并重新归一化
+            # Extract corresponding probabilities based on valid_pool and re-normalize
             valid_probs = []
             for c in valid_pool:
                 idx = self.context_size_pool.index(c)
@@ -342,29 +340,28 @@ class LightningModel(pl.LightningModule):
 
     def _apply_strategy_context(self, strategy_idx, target_in, target_out, context_in, context_lbl, context_flip, L):
         """
-        根据策略ID 修改 Context内容 和 生成 Prompt策略列表
+        Modify Context content and generate Prompt strategy list based on strategy ID.
         """
         use_text = False
         specific_prompts = None # None means random
         
-        # --- 1. 上下文内容修改 (Visual Source) ---
-        # 策略 1(C), 5(CT): All Target
+        # --- 1. Context content modification (Visual Source) ---
+        # Strategy 1(C), 5(CT): All Target
         if strategy_idx in [1, 5]:
             for l in range(L): 
                 context_in[:, l] = target_in
                 context_lbl[:, l] = target_out
         
-        # 策略 2(AC), 6(ACT): Mixed (1 Target + Rest) [Mode B Style]
-        # 策略 2(AC), 6(ACT): Mixed (1 Target + Rest) [Mode B Style]
+        # Strategy 2(AC), 6(ACT): Mixed (1 Target + Rest) [Mode B Style]
         elif strategy_idx in [2, 6]:
-            if L > 0:  # <--- [新增安全判断] 防止被动态采样截断到0后越界
+            if L > 0:  # Prevents index out-of-bounds error if truncated to 0 by dynamic sampling
                 context_in[:, 0] = target_in
                 context_lbl[:, 0] = target_out
         
         else:
             pass
 
-        # --- 2. 文本开关 & Prompt 类型 ---
+        # --- 2. Text toggle & Prompt types ---
         if strategy_idx == 0: # A
             use_text = False
             specific_prompts = None 
@@ -404,8 +401,8 @@ class LightningModel(pl.LightningModule):
 
     # 2D Logic
     # =========================================================================
-    # 替换原有的 _extract_slices_single_axis
-    # (完全保留原版的按面积加权摇号逻辑)
+    # Replace the original _extract_slices_single_axis function
+    # (Strictly preserve the original area-weighted random selection logic)
     # =========================================================================
     def _extract_multi_context_slices(self, imgs_3d, labs_3d, axis, num_samples, context_multiplier, target_g):
         G = imgs_3d.shape[0]
@@ -413,20 +410,20 @@ class LightningModel(pl.LightningModule):
         dims_to_sum = [0, 1, 2, 3]
         dims_to_sum.remove(local_target_dim)
 
-        # --- 1. 基础元数据与前景过滤 (保持原版按面积加权逻辑) ---
+        # --- 1. Base metadata and foreground filtering (Preserving the original area-weighted logic) ---
         group_metadata = []
         for g in range(G):
             lab = labs_3d[g]
             slice_areas = lab.sum(dim=tuple(dims_to_sum)).float()
             
             if slice_areas.max() > 0:
-                # 完美还原你原本训练脚本中的过滤阈值
+                # Exactly restore the filtering threshold from the original training script
                 threshold = 0.1 * slice_areas.max()
                 valid_mask = slice_areas > max(threshold, 1.0)
                 valid_indices = torch.nonzero(valid_mask).view(-1)
                 
                 if valid_indices.numel() > 0:
-                    # 【核心保持】：权重直接使用面积大小 (面积越大，被抽中的概率越高)
+                    # Weights correspond directly to the area size (larger area = higher selection probability)
                     valid_weights = slice_areas[valid_indices]
                     group_metadata.append({
                         'valid': True, 
@@ -444,12 +441,12 @@ class LightningModel(pl.LightningModule):
         out_c_in_list = []
         out_c_out_list = []
 
-        # --- 2. 抽取 Target 与 Context ---
+        # --- 2. Extract Target and Context ---
         for n in range(num_samples):
-            # 2.1 抽 Target (按面积加权摇 1 张)
+            # 2.1 Sample Target (Draw 1 slice based on area-weighted probability)
             target_meta = group_metadata[target_g]
             if target_meta['valid']:
-                # multinomial 使用 weights 进行加权概率抽样
+                # Multinomial uses weights for weighted probability sampling
                 t_idx_local = torch.multinomial(target_meta['weights'], 1, replacement=True).item()
                 t_abs_idx = target_meta['valid_indices'][t_idx_local].item()
             else:
@@ -458,18 +455,18 @@ class LightningModel(pl.LightningModule):
             t_img = torch.index_select(imgs_3d[target_g], local_target_dim, torch.tensor([t_abs_idx], device=self.device)).squeeze(local_target_dim)
             t_lab = torch.index_select(labs_3d[target_g], local_target_dim, torch.tensor([t_abs_idx], device=self.device)).squeeze(local_target_dim)
             
-            # 2.2 抽 Context (每个支持图像按面积加权摇 context_multiplier 张)
+            # 2.2 Sample Context (Draw context_multiplier slices per support image based on area-weighted probability)
             c_imgs_for_this_sample = []
             c_labs_for_this_sample = []
             
             for g in range(G):
-                if g == target_g: continue # 跳过自己
+                if g == target_g: continue # Skip the target itself
                 follower_meta = group_metadata[g]
                 
-                # 循环扩充上下文数量
+                # Iteratively expand the number of contexts
                 for _ in range(context_multiplier):
                     if follower_meta['valid']:
-                        # 【核心保持】：上下文也严格按照面积加权摇号
+                        # Contexts are strictly sampled using area-weighted probabilities
                         c_idx_local = torch.multinomial(follower_meta['weights'], 1, replacement=True).item()
                         c_abs_idx = follower_meta['valid_indices'][c_idx_local].item()
                     else:
@@ -490,13 +487,13 @@ class LightningModel(pl.LightningModule):
                 torch.stack(out_c_in_list, dim=0), torch.stack(out_c_out_list, dim=0))
 
     # =========================================================================
-    # 替换原有的 _prepare_batch_multi_axis
+    # Replace the original _prepare_batch_multi_axis function
     # =========================================================================
     def _prepare_batch_multi_axis(self, imgs_3d, labs_3d, flipped_status_group, batch_idx):
         # -------------------------------------------------------------
-        # 修改这里：每个 3D Context 图像提供多少张 2D 切片
-        # 假设 DataLoader 传来 G=5 (1 Target + 4 Context)
-        # context_multiplier = 4 时，上下文总数量 L = 4 * 4 = 16
+        # Configure how many 2D slices each 3D Context image provides
+        # Assume DataLoader provides G=5 (1 Target + 4 Contexts)
+        # With context_multiplier = 4, the total context count L = 4 * 4 = 16
         # -------------------------------------------------------------
         context_multiplier = 1
         
@@ -516,18 +513,18 @@ class LightningModel(pl.LightningModule):
         for axis_i, num_s in enumerate(ns_list):
             if num_s <= 0: continue
             
-            # 轮流做 Target
+            # Take turns serving as the Target
             for target_g in range(G):
                 t_in, t_out, c_in, c_lbl = self._extract_multi_context_slices(
                     imgs_3d, labs_3d, axis_i, num_s, context_multiplier, target_g
                 )
                 
-                # 翻转状态对齐
+                # Align flip status
                 curr_flipped = flipped_status_group.clone()
                 context_indices = [i for i in range(G) if i != target_g]
                 c_flip_base = curr_flipped[context_indices] # [G-1]
                 
-                # 将翻转状态扩展到 L_total 数量
+                # Expand the flip status to match L_total
                 c_flip = c_flip_base.unsqueeze(1).repeat(1, context_multiplier).view(-1)
                 c_flip = c_flip.unsqueeze(0).repeat(num_s, 1) # [num_s, L_total]
                 
@@ -557,46 +554,46 @@ class LightningModel(pl.LightningModule):
         L = context_in.shape[1]
         
         # =================================================================
-        # [新增] 动态 Context Size 截断 (2D 模式)
+        # Dynamic Context Size truncation (2D mode)
         # =================================================================
-        context_multiplier = 1  # 因为在 _prepare_batch_multi_axis 中写死了是 4
+        context_multiplier = 1  # Because it is set in _prepare_batch_multi_axis
         current_cases = L // context_multiplier
         sampled_cases = self._sample_dynamic_context_size(current_cases)
         
         if sampled_cases < current_cases:
             sampled_L = sampled_cases * context_multiplier
-            # 直接通过切片物理丢弃多余的 Context 图像
+            # Physically discard surplus Context images via slicing
             context_in = context_in[:, :sampled_L]
             context_lbl = context_lbl[:, :sampled_L]
             context_flip = context_flip[:, :sampled_L]
             L = sampled_L
         # =================================================================
         
-        # === 0. 提前获取 Target IDs 检查是否为未知类别 ===
+        # === 0. Retrieve Target IDs early to check for unknown categories ===
         is_unknown_label = False
         target_ids = None
         if dataset_name in self.text_enabled_datasets:
             target_ids = self._get_target_ids(batch, target_in.shape[0])
             
-            # 展平检查是否全部是兜底的 0
+            # Flatten and check if all elements are the fallback 0
             def flatten_check(item):
                 if isinstance(item, (list, tuple)):
                     return [x for sub in item for x in flatten_check(sub)]
                 return [item]
                 
             flat_ids = flatten_check(target_ids)
-            # 如果展平后全部是 0 (即 DEFAULT_TEXT_ID)，说明是未知类别或 random
+            # If all elements after flattening are 0 (i.e., DEFAULT_TEXT_ID), it indicates an unknown category or random
             if all(x == 0 for x in flat_ids):
                 is_unknown_label = True
         
-        # === 1. 采样策略 (加入降级逻辑) ===
+        # === 1. Sample strategy (includes fallback degradation logic) ===
         if is_unknown_label:
-            # 强制降级到纯视觉策略 (0: A, 1: C, 2: AC)
+            # Force degradation to vision-only strategies (0: A, 1: C, 2: AC)
             strategy_idx = np.random.choice(3, p=self.probs_vis_only)
         else:
             strategy_idx = self._sample_strategy(dataset_name)
         
-        # === 2. 应用策略 ===
+        # === 2. Apply strategy ===
         context_in, context_lbl, use_text, specific_prompts = self._apply_strategy_context(
             strategy_idx, target_in, target_out, context_in, context_lbl, context_flip, L
         )
@@ -604,16 +601,16 @@ class LightningModel(pl.LightningModule):
         # === [Scheme C Modification] Physical Removal for Text Only ===
         visual_mask = None
         if strategy_idx == 3: # Text Only
-            # 物理置空：创建维度为 [B, 0, C, H, W] 的空 Tensor
+            # Physical removal: Create an empty Tensor with dimensions [B, 0, C, H, W]
             B, L_old, C, H, W = context_in.shape
             context_in = torch.zeros((B, 0, C, H, W), device=self.device)
             context_lbl = torch.zeros((B, 0, C, H, W), device=self.device)
             context_prompt = torch.zeros((B, 0, C, H, W), device=self.device)
         else:
-            # 正常生成 Prompt
+            # Generate Prompt normally
             context_prompt = self.generate_sparse_prompt(context_lbl, True, context_flip, specific_prompt_types=specific_prompts)
 
-        # === 3. 准备 Text Tokens (复用提前获取的 target_ids) ===
+        # === 3. Prepare Text Tokens (reuse previously retrieved target_ids) ===
         language_tokens = None
         if use_text and target_ids is not None:
             language_tokens = self.text_adapter(target_ids, self.device)
@@ -622,14 +619,14 @@ class LightningModel(pl.LightningModule):
         optimizer = self.optimizers()
         mask = self.forward(target_in, context_in, context_prompt, language_tokens=language_tokens, visual_mask=visual_mask)
         
-        # 【修改】使用乘以 0.0 的方式，保持计算图连通
+        # Multiply by 0.0 to maintain the connectivity of the computation graph
         raw_loss = self.custom_loss(mask, target_out, task)
         if target_out.sum() < 5:
-             loss = raw_loss * 0.0  # 过滤空样本：产生全 0 梯度，不干扰学习
+             loss = raw_loss * 0.0  # Filter empty samples: Generate all-zero gradients without disrupting learning
         else:
              loss = raw_loss
         
-        # 【修改】绝对不要写 if loss.item() > 0，所有进程必须强行 backward
+        # All processes must strictly execute backward pass without checking if loss.item() > 0
         self.manual_backward(loss)
         self.clip_gradients(optimizer, gradient_clip_val=2.5, gradient_clip_algorithm="norm")  
         optimizer.step(); optimizer.zero_grad()
@@ -651,52 +648,52 @@ class LightningModel(pl.LightningModule):
         
         num_rolls = imgs.shape[0]; optimizer = self.optimizers(); losses = []
         
-        # === 0. 提前获取 Target IDs 检查是否为未知类别 ===
+        # === 0. Retrieve Target IDs early to check for unknown categories ===
         is_unknown_label = False
         all_ids = None
         if dataset_name in self.text_enabled_datasets:
             all_ids = self._get_target_ids(batch, num_rolls)
             
-            # 展平检查是否全部是兜底的 0
+            # Flatten and check if all elements are the fallback 0
             def flatten_check(item):
                 if isinstance(item, (list, tuple)):
                     return [x for sub in item for x in flatten_check(sub)]
                 return [item]
                 
             flat_ids = flatten_check(all_ids)
-            # 如果展平后全部是 0 (即 DEFAULT_TEXT_ID)，说明是未知类别或 random
+            # If all elements after flattening are 0 (i.e., DEFAULT_TEXT_ID), it indicates an unknown category or random
             if all(x == 0 for x in flat_ids):
                 is_unknown_label = True
 
-        # === 1. 采样策略 (Batch 级别统一策略) ===
+        # === 1. Sample strategy (Batch-level uniform strategy) ===
         if is_unknown_label:
             strategy_idx = np.random.choice(3, p=self.probs_vis_only)
         else:
             strategy_idx = self._sample_strategy(dataset_name)
 
         # =================================================================
-        # [修改] 在循环外统一决定这个 Batch 的 Context Size
+        # Determine the Context Size for this Batch uniformly outside the loop
         # =================================================================
-        batch_L = imgs.shape[0] - 1  # 初始的总可用 Context 数量 (Batch Size - 1)
+        batch_L = imgs.shape[0] - 1  # Initial total available Context count (Batch Size - 1)
         sampled_L = self._sample_dynamic_context_size(batch_L)
 
         for i in range(num_rolls):
-            # 1. 数据滚动
+            # 1. Data rolling
             imgs = torch.roll(imgs, 1, 0); labs = torch.roll(labs, 1, 0); flipped_status = torch.roll(flipped_status, 1, 0)
             target_in = imgs[:1,:]; context_in = imgs[None, 1:,:]; target_out = labs[:1,:]; context_label_dense = labs[None, 1:,:]; context_flipped = flipped_status[None, 1:]
             
             # =================================================================
-            # [修改] 使用循环外确定的 sampled_L 进行截断
+            # Truncate using sampled_L determined outside the loop
             # =================================================================
             if sampled_L < batch_L:
                 context_in = context_in[:, :sampled_L]
                 context_label_dense = context_label_dense[:, :sampled_L]
                 context_flipped = context_flipped[:, :sampled_L]
             
-            L = sampled_L # 更新 L 供后续使用
+            L = sampled_L # Update L for subsequent use
             # =================================================================
 
-            # === 2. 应用策略 ===
+            # === 2. Apply strategy ===
             context_in, context_label_dense, use_text, specific_prompts = self._apply_strategy_context(
                 strategy_idx, target_in, target_out, context_in, context_label_dense, context_flipped, L
             )
@@ -704,7 +701,7 @@ class LightningModel(pl.LightningModule):
             # === [Scheme C Modification] Physical Removal for Text Only ===
             visual_mask = None
             if strategy_idx == 3: # Text Only
-                # 物理置空
+                # Physical removal
                 B, C, W, H, D = target_in.shape
                 context_in = torch.zeros((B, 0, C, W, H, D), device=self.device)
                 context_label_dense = torch.zeros((B, 0, C, W, H, D), device=self.device)
@@ -712,17 +709,17 @@ class LightningModel(pl.LightningModule):
             else:
                 context_prompt = self.generate_sparse_prompt(context_label_dense, True, context_flipped, specific_prompt_types=specific_prompts)
 
-            # === 3. 准备 Text Tokens (复用提前获取的 all_ids) ===
+            # === 3. Prepare Text Tokens (reuse previously retrieved all_ids) ===
             language_tokens = None
             if use_text and all_ids is not None:
                 current_idx = -(i + 1) % num_rolls
                 target_ids_base = [all_ids[current_idx]]
                 language_tokens = self.text_adapter(target_ids_base, self.device)
             
-            # 5. 前向传播
+            # 5. Forward propagation
             mask = self.forward(target_in, context_in, context_prompt, language_tokens=language_tokens, visual_mask=visual_mask)
             
-            # 【修改】加入防空切片逻辑，并计算原始 loss
+            # Include logic to prevent empty slices and compute the original loss
             raw_loss = self.custom_loss(mask, target_out, task)
             if target_out.sum() < 5:
                 loss = raw_loss * 0.0
@@ -731,8 +728,8 @@ class LightningModel(pl.LightningModule):
                 
             losses.append(loss.detach()) 
             
-            # 6. 反向传播 
-            # 【修改】去掉 if loss.item() > 0 的限制
+            # 6. Backward propagation 
+            # Remove the 'if loss.item() > 0' constraint
             self.manual_backward(loss)
             self.clip_gradients(optimizer, gradient_clip_val=2.5, gradient_clip_algorithm="norm")
             optimizer.step(); optimizer.zero_grad()
@@ -897,26 +894,26 @@ class LightningModel(pl.LightningModule):
                 elif context_prompt.ndim == 5: prompt_vol = context_prompt[b, 0]    
                 else: prompt_vol = context_prompt[b]
 
-            # [修复] 切片选择逻辑优化
+            # Slice selection logic optimization
             prompt_indices = torch.nonzero(prompt_vol) 
             
             if prompt_indices.shape[0] > 0:
-                # 优先方案 A: 跟随 Prompt (正常模式)
+                # Primary Plan A: Follow the Prompt (Normal mode)
                 std_devs = torch.std(prompt_indices.float(), dim=0)
                 best_axis_idx = torch.argmin(std_devs).item()
                 slice_index = int(prompt_indices[:, best_axis_idx].float().mean().item())
             else:
-                # 备选方案 B: 跟随 GT (Text Only 模式)
-                # 既然没有 Prompt 指路，就去 GT 里找有东西的那一层
+                # Alternative Plan B: Follow the GT (Text Only mode)
+                # Since there is no Prompt for guidance, search the GT for a non-empty slice
                 gt_indices = torch.nonzero(target_gt[b, 0])
                 
                 if gt_indices.shape[0] > 0:
-                    # 计算 GT 的重心
+                    # Calculate the center of mass of the GT
                     std_devs = torch.std(gt_indices.float(), dim=0)
                     best_axis_idx = torch.argmin(std_devs).item()
                     slice_index = int(gt_indices[:, best_axis_idx].float().mean().item())
                 else:
-                    # 备选方案 C: GT 也是空的 (真·背景)，由于没有参照物，只能切中间
+                    # Alternative Plan C: GT is also empty (true background). Lacking a reference, slice through the middle
                     best_axis_idx = 2 
                     slice_index = target_img.shape[2] // 2
 
@@ -950,19 +947,19 @@ class LightningModel(pl.LightningModule):
             save_image(grid, os.path.join(save_dir, fname))
             
     def configure_optimizers(self):
-        # 1. 分离参数组
+        # 1. Separate parameter groups
         text_params = list(self.text_adapter.parameters())
         base_params = [p for n, p in self.named_parameters() if "text_adapter" not in n]
         
-        # 2. 为 Text Adapter 设置更大的 LR (比如基准 LR 的 50-100 倍)
+        # 2. Set a higher LR for the Text Adapter (e.g., 50-100x the base LR)
         adapter_lr = self.hparams.lr * 100.0 
         
-        # 打印确认
+        # Print confirmation
         print(f"\n[Optimizer Config] Base LR: {self.hparams.lr}, Text Adapter LR: {adapter_lr}")
         
         optimizer = torch.optim.Adam([
             {'params': base_params, 'lr': self.hparams.lr},
-            {'params': text_params, 'lr': adapter_lr} # 猛火攻 Text
+            {'params': text_params, 'lr': adapter_lr} # Aggressive learning rate for Text Adapter
         ])
         
         scheduler = ReduceLROnPlateau(
@@ -985,7 +982,7 @@ class LightningModel(pl.LightningModule):
     # Validation Step (Metrics Integrated)
     # ==============================================================================
     def validation_step(self, batch, batch_idx):
-        # 1. 提取元数据与任务配置
+        # 1. Extract metadata and task configuration
         dataset_name = batch.get('dataset', ['Unknown'])[0]
         task = batch['task'][0]
 
@@ -997,7 +994,7 @@ class LightningModel(pl.LightningModule):
         input_mod = process_input(batch.get('input', [''])[0])
         output_mod = process_input(batch.get('output', [''])[0])
 
-        # 指标计算辅助函数
+        # Metric calculation helper function
         def _calc_and_log_metrics(mask, target_out):
             p_pred = (mask > 0.5).float().cpu().numpy()
             p_ref = target_out.float().cpu().numpy()
@@ -1019,16 +1016,16 @@ class LightningModel(pl.LightningModule):
                 except Exception:
                     pass
 
-        # 2. 随机种子确保验证可复现
+        # 2. Set random seed to ensure reproducibility during validation
         rng_seed = int(self.current_epoch * 100000 + batch_idx)
         local_rng = np.random.RandomState(rng_seed)
         
-        # 3. 【核心修正】直接使用类中定义的策略采样逻辑
-        # 这会自动根据您传入的 --prob_text, --prob_a 等参数计算出的概率进行采样
-        # 如果 --prob_text 1，这里 strategy_idx 就会恒等于 3
+        # Directly utilize the strategy sampling logic defined within the class
+        # This automatically samples based on the probabilities calculated from parameters such as --prob_text, --prob_a
+        # If --prob_text is 1, strategy_idx will strictly equal 3 here
         strategy_idx = self._sample_strategy(dataset_name)
 
-        # --- 2D 验证分支 ---
+        # --- 2D Validation Branch ---
         if local_rng.rand() < self.prob_2d:
              imgs_3d = batch['image'][0][:, None, :]
              labs_3d = batch['label'][0][:, None, :]
@@ -1042,20 +1039,20 @@ class LightningModel(pl.LightningModule):
              
              L = context_in.shape[1]
 
-             # 应用策略逻辑 (复用训练时的逻辑)
+             # Apply strategy logic (reusing training logic)
              context_in, context_lbl, use_text, specific_prompts = self._apply_strategy_context(
                  strategy_idx, target_in, target_out, context_in, context_lbl, context_flip, L
              )
              
-             # 文本 Token 获取
+             # Text Token retrieval
              language_tokens = None
              if use_text:
-                 # 注意：这里需要确保 dataset 支持文本，_sample_strategy 已经做了检查，
-                 # 但为了安全起见，这里再检查一次白名单或让 _get_target_ids 内部处理
+                 # Note: Ensure the dataset supports text. _sample_strategy already handles this check,
+                 # but for safety, the whitelist is checked again or handled internally by _get_target_ids
                  target_ids = self._get_target_ids(batch, target_in.shape[0])
                  language_tokens = self.text_adapter(target_ids, self.device)
              
-             # 视觉上下文处理 (Scheme C: 物理置空)
+             # Visual context processing (Scheme C: Physical removal)
              if strategy_idx == 3: # Text Only Strategy
                  B, L_old, C, H, W = context_in.shape
                  context_in = torch.zeros((B, 0, C, H, W), device=self.device)
@@ -1065,13 +1062,13 @@ class LightningModel(pl.LightningModule):
                  context_prompt = self.generate_sparse_prompt(context_lbl, is_train=False, flipped_batch=context_flip, specific_prompt_types=specific_prompts)
                  vis_lbl = context_lbl
              
-             # 前向传播 (visual_mask 设为 None，靠 L=0 自动判断)
+             # Forward propagation (visual_mask is set to None, automatically inferred via L=0)
              mask = self.forward(target_in, context_in, context_prompt, language_tokens=language_tokens, visual_mask=None)
              loss = self.custom_loss(mask, target_out, task)
              self.log('val_loss', loss)
              
              if batch_idx % 10 == 0:
-                 # 可视化 Dummy
+                 # Dummy visualization variables
                  vis_ctx_in = context_in if context_in.shape[1] > 0 else torch.zeros_like(target_in).unsqueeze(1)
                  vis_ctx_prompt = context_prompt if context_prompt.shape[1] > 0 else torch.zeros_like(target_in).unsqueeze(1)
                  vis_ctx_lbl = vis_lbl if vis_lbl.shape[1] > 0 else torch.zeros_like(target_in).unsqueeze(1)
@@ -1079,12 +1076,12 @@ class LightningModel(pl.LightningModule):
              
              _calc_and_log_metrics(mask, target_out)
              
-        # --- 3D 验证分支 ---
+        # --- 3D Validation Branch ---
         else:
              imgs = batch['image'][0, :, None, :]
              labs = batch['label'][0, :, None, :]
              
-             # 视觉端切片：Batch Size 强制为 1
+             # Vision-end slicing: Batch Size is forced to 1
              target_in = imgs[:1,:] 
              context_in = imgs[None, 1:,:]
              target_out = labs[:1,:]
@@ -1093,18 +1090,18 @@ class LightningModel(pl.LightningModule):
 
              L = context_in.shape[1]
              
-             # 应用策略逻辑
+             # Apply strategy logic
              context_in, context_label_dense, use_text, specific_prompts = self._apply_strategy_context(
                  strategy_idx, target_in, target_out, context_in, context_label_dense, flipped_status_slice, L
              )
              
-             # 文本 Token 获取 (强制 batch=1)
+             # Text Token retrieval (forced to batch=1)
              language_tokens = None
              if use_text:
                  target_ids = self._get_target_ids(batch, 1) 
                  language_tokens = self.text_adapter(target_ids, self.device)
              
-             # 视觉上下文处理 (Scheme C: 物理置空)
+             # Visual context processing (Scheme C: Physical removal)
              if strategy_idx == 3: # Text Only Strategy
                  B, C, W, H, D = target_in.shape
                  context_in = torch.zeros((B, 0, C, W, H, D), device=self.device)
