@@ -9,7 +9,7 @@ from skimage.morphology import ball
 from scipy.ndimage import distance_transform_edt
 
 # ==============================================================================
-# 基础辅助函数
+# Basic Helper Functions
 # ==============================================================================
 
 def get_slice(t: torch.Tensor, ax: int, idx: int) -> torch.Tensor:
@@ -23,41 +23,41 @@ def set_slice(t: torch.Tensor, ax: int, idx: int, val: torch.Tensor) -> None:
     else: t[:, :, idx] = val
 
 # ==============================================================================
-# 核心：全局切片采样器 (Global Slice Sampler)
+# Core: Global Slice Sampler
 # ==============================================================================
 
 def _sample_global_indices(mask_3d: torch.Tensor, num_samples: int = 1, strategy: str = 'random') -> List[Tuple[int, int]]:
     """
-    在三个轴向的所有切片池中进行混合竞争。
+    Perform mixed competition among all slice pools across the three axes.
     Return: List of (axis, slice_index)
     """
-    # 计算三个轴向的投影和 (即每一层的像素数)
+    # Calculate the projection sum along the three axes (i.e., number of pixels per slice)
     w_ax0 = mask_3d.sum(dim=(1, 2)) 
     w_ax1 = mask_3d.sum(dim=(0, 2))
     w_ax2 = mask_3d.sum(dim=(0, 1))
     
-    # 拼接成一个全局权重向量
+    # Concatenate into a global weight vector
     all_weights = torch.cat([w_ax0, w_ax1, w_ax2]).float()
     
-    # 过滤掉全黑切片
+    # Filter out entirely empty (black) slices
     eligible_mask = (all_weights > 0)
     if eligible_mask.sum() == 0:
         return []
     
-    # 策略选择
+    # Strategy selection
     if strategy == 'max':
-        # 选择像素最多的那个切片 (num_samples 强制为 1)
+        # Select the slice with the maximum number of pixels (num_samples forced to 1)
         global_indices = [torch.argmax(all_weights).item()]
     else:
-        # random: 基于权重的随机采样
+        # random: Weighted random sampling based on valid pixel counts
         num_valid = eligible_mask.sum().item()
         actual_samples = min(num_samples, num_valid)
         if actual_samples < 1: actual_samples = 1
         
-        # 使用 multinomial 进行加权无放回采样
+        # Use multinomial for weighted sampling without replacement
         global_indices = torch.multinomial(all_weights, actual_samples, replacement=False).tolist()
 
-    # 解码全局索引为 (axis, local_index)
+    # Decode global indices into (axis, local_index)
     results = []
     d0, d1, d2 = mask_3d.shape
     
@@ -72,7 +72,7 @@ def _sample_global_indices(mask_3d: torch.Tensor, num_samples: int = 1, strategy
     return results
 
 # ==============================================================================
-# 1. Scribble 生成器 (已优化防止卡死)
+# 1. Scribble Generators (Optimized to prevent execution deadlock)
 # ==============================================================================
 
 class _BaseScribbleGenerator:
@@ -149,24 +149,24 @@ class LineScribbleGenerator(_BaseScribbleGenerator):
         points = np.argwhere(component_mask > 0)
         if len(points) < 2: return np.zeros_like(component_mask, dtype=np.uint8)
         
-        # [优化] 如果点太少，随机选俩；如果够多，执行智能长线逻辑
+        # [Optimization] If points are too few, select two randomly; if sufficient, execute smart long-line logic
         if len(points) < self.smart_line_min_points:
             idx1, idx2 = np.random.choice(len(points), 2, replace=False)
             p1, p2 = points[idx1], points[idx2]
         else:
-            # 随机选起点
+            # Randomly select starting point
             p1_idx = random.randint(0, len(points) - 1)
             p1 = points[p1_idx]
             
-            # [关键优化] 大数组保护：如果点数过多(>2000)，进行随机下采样来计算距离
-            # 这防止了 cdist 在处理 10000+ 点时导致 CPU 卡死
+            # [Crucial Optimization] Large array protection: randomly downsample if points exceed 2000
+            # This prevents CPU deadlock caused by cdist when processing 10000+ points
             if len(points) > 2000:
                 sample_indices = np.random.choice(len(points), 2000, replace=False)
                 calc_points = points[sample_indices]
             else:
                 calc_points = points
             
-            # 计算距离
+            # Calculate distances
             dists = distance.cdist([p1], calc_points)[0]
             percentile = np.percentile(dists, 90)
             far_points_indices = np.where(dists >= percentile)[0]
@@ -187,15 +187,15 @@ class CenterlineScribbleGenerator(_BaseScribbleGenerator):
         if not np.any(component_mask): return np.zeros_like(component_mask, dtype=np.uint8)
         opencv_mask = (component_mask * 255).astype(np.uint8)
         try:
-            # 优先尝试 OpenCV 的快速算法
+            # Prioritize OpenCV's fast thinning algorithm
             skeleton_255 = cv2.ximgproc.thinning(opencv_mask)
         except (cv2.error, AttributeError):
-            # [关键优化] 备选算法增加最大迭代次数限制，防止死循环
+            # [Crucial Optimization] Add max iteration limit to the fallback algorithm to prevent infinite loops
             skeleton_255 = np.zeros(opencv_mask.shape, np.uint8)
             element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
             temp_img = opencv_mask.copy()
             
-            max_iter = 100 # 安全刹车
+            max_iter = 100 # Safety brake
             count = 0
             
             while cv2.countNonZero(temp_img) != 0 and count < max_iter:
@@ -261,10 +261,10 @@ class InteractiveScribbleGenerator:
         return output_mask, selected_slices
 
 # ==============================================================================
-# 2. Lasso 生成器 (保留自定义 Rough Lasso 逻辑)
+# 2. Lasso Generator (Retain custom Rough Lasso logic)
 # ==============================================================================
 '''
-#规则lasso
+# Regular lasso
 def _apply_deformation_lasso(coarse_mask: np.ndarray, deformation_strength: float) -> np.ndarray:
     h, w = coarse_mask.shape
     rand_x = ndi.gaussian_filter((np.random.rand(h, w) * 2 - 1), sigma=20, mode='reflect')
@@ -292,12 +292,12 @@ def _generate_single_lasso_np(component_mask_np: np.ndarray, deformation_strengt
 '''
 def _apply_deformation(coarse_mask: np.ndarray, deformation_strength: float) -> np.ndarray:
     """
-    修改版：在保留 EDT 的前提下，制造粗糙的 Lasso 效果。
+    Modified version: Create a rough Lasso effect while preserving the Exact Distance Transform (EDT).
     """
     h, w = coarse_mask.shape
     
-    # [修改点 1] 产生高频噪声
-    sigma_val = 7.0  #################### 关键修改1：sigma=50 是平滑波浪，sigma=4 是粗糙抖动
+    # [Modification 1] Generate high-frequency noise
+    sigma_val = 7.0  # Crucial modification 1: sigma=50 yields smooth waves, sigma=4 yields rough jitter
     
     rand_x = np.random.rand(h, w) * 2 - 1
     rand_y = np.random.rand(h, w) * 2 - 1
@@ -305,12 +305,12 @@ def _apply_deformation(coarse_mask: np.ndarray, deformation_strength: float) -> 
     rand_x = ndi.gaussian_filter(rand_x, sigma=sigma_val, mode='reflect')
     rand_y = ndi.gaussian_filter(rand_y, sigma=sigma_val, mode='reflect')
     
-    # [修改点 2] 保留并计算 EDT
+    # [Modification 2] Retain and compute EDT
     edt = ndi.distance_transform_edt(coarse_mask)
     if edt.max() > 0: 
         edt = edt / edt.max()
     
-    # [关键调整] 给 EDT 加上一个底数 (Bias)
+    # [Crucial Adjustment] Add a baseline (Bias) to EDT
     weighted_map = edt + 0.4 
     
     norm_factor = 10.0 
@@ -322,7 +322,7 @@ def _apply_deformation(coarse_mask: np.ndarray, deformation_strength: float) -> 
     map_y = np.clip(y_indices + dy, 0, h - 1)
     map_x = np.clip(x_indices + dx, 0, w - 1)
     
-    # 使用线性插值
+    # Use linear interpolation
     deformed_mask = cv2.remap(
         coarse_mask.astype(np.float32), 
         map_x.astype(np.float32), 
@@ -330,16 +330,17 @@ def _apply_deformation(coarse_mask: np.ndarray, deformation_strength: float) -> 
         cv2.INTER_LINEAR
     )
     
-    # 阈值化保持二值
+    # Thresholding to maintain binary mask
     return (deformed_mask > 0.5).astype(coarse_mask.dtype)
 
 def _generate_single_lasso_np(
     component_mask_np: np.ndarray,
-    deformation_strength: float = 9.0, ########################关键修改2： 建议默认强度稍微调大
+    deformation_strength: float = 9.0, # Crucial modification 2: Suggested to slightly increase default strength
     **kwargs
     ) -> np.ndarray:
     """
-    保留了原有的形态学预处理逻辑，仅调整了扩张系数以配合粗糙变形。
+    Retains original morphological preprocessing logic, only adjusting the dilation coefficient 
+    to match the rough deformation.
     """
     if component_mask_np.max() == 0:
         return np.zeros_like(component_mask_np)
@@ -350,7 +351,7 @@ def _generate_single_lasso_np(
     
     max_dist = dist_transform.max()
     
-    # 稍微增大一点初始扩张，给向内凹陷的扰动留出空间
+    # Slightly increase initial dilation to leave room for inward concave perturbations
     kernel_size = int(max_dist * 0.8) + 3
     kernel_size = max(5, kernel_size)
     if kernel_size % 2 == 0:
@@ -406,7 +407,7 @@ def interactive_lasso_3d(mask_3d: torch.Tensor, prompt_mode: str = 'positive', m
     return output_mask, generated_prompts
 
 # ==============================================================================
-# 3. Box, Point 和 Randomized Dense Slice 生成器
+# 3. Box, Point, and Randomized Dense Slice Generators
 # ==============================================================================
 
 def randomized_slice_rects_3d(mask_3d: torch.Tensor, max_slice: int = 5, var: float = 0.5, connectivity: int = 8) -> torch.Tensor:
@@ -416,7 +417,7 @@ def randomized_slice_rects_3d(mask_3d: torch.Tensor, max_slice: int = 5, var: fl
         
     mask_bbox = torch.zeros_like(mask_3d)
     
-    # 全局采样
+    # Global sampling
     num_box = int(torch.randint(1, max_slice + 1, (1,)).item())
     selected_indices = _sample_global_indices(mask_3d, num_samples=num_box, strategy='random')
     
@@ -441,7 +442,7 @@ def randomized_slice_rects_3d(mask_3d: torch.Tensor, max_slice: int = 5, var: fl
             if y0 < y1 and x0 < x1:
                 rect2d[y0:y1, x0:x1] = 1.0
         
-        # 3层厚度
+        # 3-layer thickness
         for kk in (k - 1, k, k + 1):
             if 0 <= kk < mask_3d.shape[axis]:
                 set_slice(mask_bbox, axis, kk, torch.maximum(get_slice(mask_bbox, axis, kk), rect2d))
@@ -455,7 +456,7 @@ def randomized_slice_points_3d(mask_3d: torch.Tensor, radius: int = 6, max_slice
     device = mask_3d.device
     mask_out = torch.zeros_like(mask_3d, dtype=torch.float32)
     
-    # 全局采样
+    # Global sampling
     num_points = int(torch.randint(low=1, high=max_slice+1, size=(1,)).item())
     selected_indices = _sample_global_indices(mask_3d, num_samples=num_points, strategy='random')
     
@@ -500,12 +501,12 @@ def randomized_slice_points_3d(mask_3d: torch.Tensor, radius: int = 6, max_slice
 
 def randomized_dense_slice_3d(mask_3d: torch.Tensor, max_slice: int = 1) -> torch.Tensor:
     """
-    [New] Randomized Dense Slice 生成器 (原 MaxSlice)
-    逻辑参考 Box:
-    1. 决定生成几个切片 (1 到 max_slice)。
-    2. 全局混合竞争 (strategy='random')：像素越多的切片被选中概率越大。
-    3. 保持 GT 形状 (不是矩形)。
-    4. 执行 3 层 (k-1, k, k+1) 赋值。
+    [New] Randomized Dense Slice Generator (formerly MaxSlice)
+    Logic reference Box:
+    1. Determine the number of slices to generate (1 to max_slice).
+    2. Global mixed competition (strategy='random'): Slices with more pixels have a higher probability of being selected.
+    3. Maintain GT shape (not rectangular).
+    4. Execute 3-layer (k-1, k, k+1) assignments.
     """
     if mask_3d.ndim != 3:
         if mask_3d.ndim == 4 and mask_3d.shape[0] == 1: mask_3d = mask_3d[0]
@@ -513,87 +514,86 @@ def randomized_dense_slice_3d(mask_3d: torch.Tensor, max_slice: int = 1) -> torc
         
     mask_out = torch.zeros_like(mask_3d)
     
-    # 1. 决定生成数量
+    # 1. Determine the generation count
     num_prompts = int(torch.randint(1, max_slice + 1, (1,)).item())
     
-    # 2. 全局加权采样
+    # 2. Global weighted sampling
     selected_indices = _sample_global_indices(mask_3d, num_samples=num_prompts, strategy='random')
     
-    # 3. 赋值操作
+    # 3. Assignment operation
     for axis, k in selected_indices:
-        # 获取该切片的原始 Mask
-        # 使用 clone 确保在赋值时不会出现内存视图问题
+        # Obtain the original Mask of the slice
+        # Use clone to ensure no memory view issues during assignment
         slice_mask = get_slice(mask_3d, axis, k).clone()
         
-        # 3层赋值
+        # 3-layer assignment
         for kk in (k - 1, k, k + 1):
             if 0 <= kk < mask_3d.shape[axis]:
-                # 使用 maximum 叠加，防止不同 slice 的扩展区域互相覆盖导致信息丢失
+                # Use maximum overlay to prevent expanded regions of different slices from overwriting each other, preventing information loss
                 set_slice(mask_out, axis, kk, torch.maximum(get_slice(mask_out, axis, kk), slice_mask))
             
     return mask_out
 
 
-
 # ============================================================================================================================================================#
-#                                                                             2D版本
+#                                                                         2D Version
 # ============================================================================================================================================================#
-from skimage.morphology import disk  # 注意这里对应 3D 的 ball
+from skimage.morphology import disk  # Note: This corresponds to the 3D 'ball'
 
 # ==============================================================================
-# 4. 2D 专用 Prompt 生成器 (严谨复刻版)
+# 4. 2D Specific Prompt Generators (Strictly Replicated Version)
 # ==============================================================================
 
 def _extract_2d_mask(mask_input: torch.Tensor) -> Tuple[np.ndarray, torch.device, torch.dtype, tuple]:
     """
-    通用辅助函数：从 5D/4D/3D Tensor 中提取出唯一的 2D HxW Numpy 面。
+    General helper function: Extract the unique 2D HxW Numpy plane from a 5D/4D/3D Tensor.
     """
     device = mask_input.device
     dtype = mask_input.dtype
     original_shape = mask_input.shape
     
-    # 尝试挤压维度
+    # Attempt to squeeze dimensions
     mask_sq = mask_input.squeeze() 
     
-    # 鲁棒性处理：确保获取 HxW
+    # Robustness handling: Ensure HxW is obtained
     if mask_sq.ndim == 2:
         mask_np = mask_sq.cpu().numpy()
     else:
-        # 如果 squeeze 后不是 2D (例如 batch size 不为 1 或者是 1x1 图像)，尝试智能推断
+        # If not 2D after squeezing (e.g., batch size != 1 or 1x1 image), attempt smart inference
         mask_np_raw = mask_input.cpu().numpy()
-        # 找到所有空间维度 (>1)
+        # Find all spatial dimensions (>1)
         spatial_dims = [s for s in mask_np_raw.shape if s > 1]
         if len(spatial_dims) >= 2:
-            # 假设最后两个有效维度是 H, W
+            # Assume the last two valid dimensions are H, W
             mask_np = mask_np_raw.reshape(-1, spatial_dims[-2], spatial_dims[-1])[0]
         else:
-            # 极端保底
+            # Extreme fallback
             mask_np = np.zeros((128, 128), dtype=np.uint8)
             
     return mask_np.astype(np.uint8), device, dtype, original_shape
 
 def randomized_rects_2d(mask_input: torch.Tensor, max_rects: int = 1, var: float = 0.5) -> torch.Tensor:
     """
-    [严谨复刻 Box] 对应 randomized_slice_rects_3d
-    逻辑：
-    1. 连通域分析 (ndi.label)
-    2. 获取每个连通域的切片范围 (find_objects)
-    3. 对坐标应用高斯扰动 (var)
-    4. 填充矩形
+    [Strict Box Replication] Corresponds to randomized_slice_rects_3d
+    Logic:
+    1. Connected component labeling (ndi.label)
+    2. Obtain object slices (find_objects)
+    3. Compute perturbation (var)
+    4. Fill rectangles
     """
     mask_np, device, dtype, original_shape = _extract_2d_mask(mask_input)
     mask_bbox = np.zeros_like(mask_np, dtype=np.float32)
     
-    # 1. 连通域标记
+    # 1. Connected component labeling
     labeled, num = ndi.label(mask_np, structure=np.ones((3, 3), dtype=np.uint8))
     
     if num > 0:
-        # 2. 获取对象切片
+        # 2. Obtain object slices
         slices = ndi.find_objects(labeled)
         
-        # 严格复刻 3D 逻辑：对每个连通域生成 Box
-        # 注意：原 3D 代码是遍历所有 slices。如果需要限制数量，应在这里 shuffle 并截断
-        # 这里为了保持一致性，处理所有连通域，但受外部概率控制
+        # Strictly replicate 3D logic: Generate Box for each connected component
+        # Note: Original 3D code iterates through all slices. If quantity limits are needed, shuffle and truncate here
+        # Processed all connected components here to maintain consistency, controlled by external probabilities
         
         H, W = mask_np.shape
         std = float(var) ** 0.5 if var > 0 else 0.0
@@ -601,23 +601,23 @@ def randomized_rects_2d(mask_input: torch.Tensor, max_rects: int = 1, var: float
         for slc in slices:
             if slc is None: continue
             
-            # 提取原始边界
+            # Extract original boundaries
             ymin, ymax = slc[0].start, slc[0].stop
             xmin, xmax = slc[1].start, slc[1].stop
             
-            # 3. 计算扰动 (严格复刻 torch.normal 逻辑)
+            # 3. Compute perturbation (Strictly replicate torch.normal logic)
             if std > 0:
                 off = np.random.normal(loc=0.0, scale=std, size=4).round().astype(int)
             else:
                 off = [0, 0, 0, 0]
             
-            # 应用扰动并进行边界裁剪
+            # Apply perturbation and perform boundary clipping
             y0 = max(0, int(ymin) + off[0])
             y1 = min(H, int(ymax) + off[1])
             x0 = max(0, int(xmin) + off[2])
             x1 = min(W, int(xmax) + off[3])
             
-            # 4. 填充
+            # 4. Fill
             if y0 < y1 and x0 < x1:
                 mask_bbox[y0:y1, x0:x1] = 1.0
 
@@ -626,49 +626,49 @@ def randomized_rects_2d(mask_input: torch.Tensor, max_rects: int = 1, var: float
 
 def randomized_points_2d(mask_input: torch.Tensor, radius: int = 6, max_points: int = 1) -> torch.Tensor:
     """
-    [严谨复刻 Point] 对应 randomized_slice_points_3d
-    逻辑：
-    1. 生成 soft sphere (这里退化为 soft disk)
-    2. 连通域分析
-    3. 每个连通域随机取一点
-    4. 叠加 soft disk
+    [Strict Point Replication] Corresponds to randomized_slice_points_3d
+    Logic:
+    1. Generate soft sphere (degrades to soft disk here)
+    2. Connected component analysis
+    3. Randomly select one point per connected component
+    4. Overlay soft disk
     """
     mask_np, device, dtype, original_shape = _extract_2d_mask(mask_input)
     mask_out = np.zeros_like(mask_np, dtype=np.float32)
     
-    # 1. 准备 Soft Disk (严格复刻 ball -> distance_transform -> normalize)
-    # 3D 用 ball(radius), 2D 用 disk(radius)
+    # 1. Prepare Soft Disk (Strictly replicate ball -> distance_transform -> normalize)
+    # Use ball(radius) for 3D, disk(radius) for 2D
     strel = disk(radius).astype(np.float32)
     soft_disk = distance_transform_edt(strel)
     soft_disk /= (soft_disk.max() + 1e-8)
     sz = soft_disk.shape # (h_k, w_k)
     
-    # 2. 连通域标记
+    # 2. Connected component labeling
     labeled, num = ndi.label(mask_np, structure=np.ones((3, 3), dtype=np.uint8))
     
-    # 决定采样多少个连通域 (复刻 num_points 逻辑)
-    # 原 3D 逻辑是先选切片，再在切片里的每个连通域都打点。
-    # 这里我们对应为：在当前 2D 面上，对每个连通域打点。
+    # Determine how many connected components to sample (replicate num_points logic)
+    # Original 3D logic: Select slice first, then place points in each connected component within the slice.
+    # Here we map this to: Place points on each connected component on the current 2D plane.
     
     for l in range(1, num + 1):
-        # 3. 随机取点
+        # 3. Randomly select points
         coords = np.argwhere(labeled == l)
         if len(coords) == 0: continue
         
-        # 随机选择中心点 center (y, x)
+        # Randomly select center point (y, x)
         pt_idx = np.random.randint(len(coords))
         center = coords[pt_idx] # [y, x]
         
-        # 4. 放置 Soft Disk (处理边界)
-        # 严格复刻 3D 代码中的切片计算逻辑
+        # 4. Place Soft Disk (Handle boundaries)
+        # Strictly replicate slice calculation logic from 3D code
         starts = [c - s // 2 for c, s in zip(center, sz)]
         ends = [s + sz_i for s, sz_i in zip(starts, sz)]
         
-        ranges = []        # 原图切片
-        disk_ranges = []   # Disk 切片
+        ranges = []        # Original image slice
+        disk_ranges = []   # Disk slice
         valid = True
         
-        for i in range(2): # 遍历 y, x 轴
+        for i in range(2): # Iterate over y, x axes
             s, e, d, sz_i = starts[i], ends[i], mask_np.shape[i], sz[i]
             if s >= d or e <= 0: 
                 valid = False; break
@@ -682,7 +682,7 @@ def randomized_points_2d(mask_input: torch.Tensor, radius: int = 6, max_points: 
             disk_ranges.append(slice(d_start, d_end))
             
         if valid:
-            # 使用 maximum 叠加，模拟 soft sphere 效果
+            # Use maximum overlay to simulate soft sphere effect
             mask_out[tuple(ranges)] = np.maximum(mask_out[tuple(ranges)], soft_disk[tuple(disk_ranges)])
             
     prompt_tensor = torch.from_numpy(mask_out).to(device=device, dtype=dtype)
@@ -690,14 +690,14 @@ def randomized_points_2d(mask_input: torch.Tensor, radius: int = 6, max_points: 
 
 def randomized_dense_2d(mask_input: torch.Tensor) -> torch.Tensor:
     """
-    [严谨复刻 Dense] 对应 randomized_dense_slice_3d
-    逻辑：
-    直接返回 Mask 副本，因为 2D 模式下没有 "k-1, k, k+1" 的层间扩展。
+    [Strict Dense Replication] Corresponds to randomized_dense_slice_3d
+    Logic:
+    Directly return the Mask copy, as 2D mode lacks the "k-1, k, k+1" inter-layer expansion.
     """
     return mask_input.clone()
 
 # ==============================================================================
-# Wrappers for Lasso and Scribble (适配接口)
+# Wrappers for Lasso and Scribble (Adapter Interfaces)
 # ==============================================================================
 
 def interactive_lasso_2d(mask_input: torch.Tensor, deformation_strength: float = 9.0) -> torch.Tensor:
@@ -706,7 +706,7 @@ def interactive_lasso_2d(mask_input: torch.Tensor, deformation_strength: float =
     """
     mask_np, device, dtype, original_shape = _extract_2d_mask(mask_input)
     try:
-        # 复用核心 Lasso 生成逻辑
+        # Reuse core Lasso generation logic
         lasso_np = _generate_single_lasso_np(mask_np, deformation_strength=deformation_strength)
     except Exception:
         lasso_np = np.zeros_like(mask_np)
@@ -720,7 +720,7 @@ def generate_scribbles_2d(mask_input: torch.Tensor, generator) -> torch.Tensor:
     """
     mask_np, device, dtype, original_shape = _extract_2d_mask(mask_input)
     try:
-        # 复用核心 Scribble 生成逻辑 (Line, Centerline, Contour)
+        # Reuse core Scribble generation logic (Line, Centerline, Contour)
         scribble_np = generator(mask_np)
     except Exception:
         scribble_np = np.zeros_like(mask_np)
