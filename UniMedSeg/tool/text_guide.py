@@ -4,7 +4,7 @@ import os
 import math  
 
 # ==============================================================================
-# 1. 标签映射表 
+# 1. Label Mapping Table 
 # ==============================================================================
 FREESURFER_LUT = {
     0: "Background",
@@ -18,7 +18,7 @@ FREESURFER_LUT = {
     11: "Caudate",
     12: "Putamen",
     13: "Pallidum",
-    14: "Third Ventricle",           
+    14: "Third Ventricle",            
     15: "Fourth Ventricle",
     16: "Brain Stem",
     17: "Hippocampus",                
@@ -28,7 +28,7 @@ FREESURFER_LUT = {
     28: "Ventral DC",
     30: "Vessel",
     31: "Choroid Plexus",
-    # --- 右侧 ID 映射到相同的通用名称 ---
+    # --- Map right hemisphere IDs to the same generic names ---
     41: "Cerebral White Matter",      
     42: "Cerebral Cortex",
     43: "Lateral Ventricle",
@@ -45,7 +45,7 @@ FREESURFER_LUT = {
     60: "Ventral DC",
     62: "Vessel",
     63: "Choroid Plexus",
-    # --- 其他 ---
+    # --- Miscellaneous ---
     72: "Fifth Ventricle",
     77: "White Matter Hypointensities",
     80: "Non White Matter Hypointensities",
@@ -56,17 +56,18 @@ FREESURFER_LUT = {
 }
 
 # ==============================================================================
-# 2. 文本嵌入适配器 (支持动态 Token 计算)
+# 2. Text Embedding Adapter (Supports dynamic token computation)
 # ==============================================================================
 class TextEmbeddingAdapter(nn.Module):
     """
-    负责管理离线 BiomedBERT 缓存和可训练的投影层。
-    自动根据 target_embed_dim 计算所需的 Token 数量，确保信息不丢失。
+    Manages the offline BiomedBERT cache and trainable projection layers.
+    Automatically calculates the required number of tokens based on target_embed_dim 
+    to prevent information loss.
     """
     def __init__(self, cache_path="biomedbert_embeddings_cache.pt", target_embed_dim=432):
         super().__init__()
         
-        # ================= [新增] 自动定位同级文件逻辑 =================
+        # ================= [Added] Logic for automatically locating sibling files =================
         current_dir = os.path.dirname(os.path.abspath(__file__))
         sibling_path = os.path.join(current_dir, os.path.basename(cache_path))
         
@@ -82,9 +83,9 @@ class TextEmbeddingAdapter(nn.Module):
             print(f"[TextAdapter] WARNING: Cache file NOT found.")
             print(f"              Checked: {sibling_path}")
             print(f"              Checked: {cache_path}")
-        # =============================================================
+        # ============================================================================================
 
-        # 3. 加载
+        # 3. Load Cache
         if final_path and os.path.exists(final_path):
             self.embedding_cache = torch.load(final_path, map_location='cpu')
             self.cache_available = True
@@ -95,24 +96,24 @@ class TextEmbeddingAdapter(nn.Module):
         self.bert_dim = 768
         self.target_dim = target_embed_dim
         
-        # 2. 自动计算 tokens_per_word
+        # 2. Automatically compute tokens_per_word
         self.tokens_per_word = math.ceil(self.bert_dim / self.target_dim)
         
         print(f"[TextAdapter] Auto-calculated tokens per word: {self.tokens_per_word}")
         print(f"              (BERT {self.bert_dim} -> Model {self.target_dim} x {self.tokens_per_word} = {self.target_dim * self.tokens_per_word})")
         
-        # 3. [修改] 定义投影层为两层 MLP
-        # 结构: Linear(768 -> 768) -> GELU -> Linear(768 -> target * k)
+        # 3. [Modified] Define the projection layer as a two-layer MLP
+        # Structure: Linear(768 -> 768) -> GELU -> Linear(768 -> target * k)
         output_dim = self.target_dim * self.tokens_per_word
-        hidden_dim = self.bert_dim  # 中间层维度保持与 BERT 输出一致，也可根据需要调整
+        hidden_dim = self.bert_dim  # The hidden layer dimension is kept consistent with the BERT output, but can be adjusted as needed
         
         self.projection = nn.Sequential(
             nn.Linear(self.bert_dim, hidden_dim),
-            nn.GELU(),  # 相比 ReLU，GELU 在 BERT/Transformer 类任务中表现通常更好
+            nn.GELU(),  # GELU typically performs better than ReLU in BERT/Transformer-based tasks
             nn.Linear(hidden_dim, output_dim)
         )
         
-        # 初始化 (遍历 Sequential 中的所有层)
+        # Initialization (iterate through all layers in Sequential)
         for m in self.projection.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight, a=0.01)
@@ -120,8 +121,8 @@ class TextEmbeddingAdapter(nn.Module):
 
     def forward(self, id_list_batch, device):
         """
-        输入: id_list_batch (List[List[int]]) 例如 [[17, 53], [0]]
-        输出: tensor [B, L * tokens_per_word, target_dim]
+        Input: id_list_batch (List[List[int]]), e.g., [[17, 53], [0]]
+        Output: tensor [B, L * tokens_per_word, target_dim]
         """
         if not self.cache_available:
             return None
@@ -129,7 +130,7 @@ class TextEmbeddingAdapter(nn.Module):
         batch_embeddings = []
         max_len = 0
         
-       # --- A. 查表获取 768维 BERT 特征 ---
+        # --- A. Table lookup to extract 768-dimensional BERT features ---
         for ids in id_list_batch:
             def flatten(item):
                 if isinstance(item, (list, tuple)):
@@ -139,10 +140,10 @@ class TextEmbeddingAdapter(nn.Module):
             flat_ids = flatten(ids)
 
             if not flat_ids or (len(flat_ids) == 1 and flat_ids[0] == 0):
-                # 空特征 padding
+                # Padding for empty features
                 feat = torch.zeros(1, 1, self.bert_dim).to(device)
             else:
-                key = tuple(sorted(flat_ids)) # 使用展平后的列表生成 tuple
+                key = tuple(sorted(flat_ids)) # Generate a tuple using the flattened list
                 if key in self.embedding_cache:
                     feat = self.embedding_cache[key].to(device)
                 else:
@@ -164,12 +165,12 @@ class TextEmbeddingAdapter(nn.Module):
             
         bert_features = torch.cat(padded_batch, dim=0) # [B, max_L, 768]
         
-        # --- C. 投影 (MLP) 与重塑 ---
-        # 1. 投影: [B, L, 768] -> [B, L, target_dim * k]
-        # 这里的 self.projection 现在是一个包含两层 Linear 的 Sequential
+        # --- C. Projection (MLP) and Reshaping ---
+        # 1. Projection: [B, L, 768] -> [B, L, target_dim * k]
+        # Here, self.projection is a Sequential module containing two Linear layers
         projected = self.projection(bert_features)
         
-        # 2. 重塑: 把扩展的维度“折叠”进序列长度里
+        # 2. Reshape: "Fold" the expanded dimensions into the sequence length
         # [B, L, target_dim * k] -> [B, L * k, target_dim]
         B, L, _ = projected.shape
         language_tokens = projected.view(
